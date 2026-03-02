@@ -6,6 +6,7 @@ import "github.com/spf13/cobra"
 type Actions interface {
 	Create(cmd *cobra.Command, args []string) error
 	Run(cmd *cobra.Command, args []string) error
+	Clone(cmd *cobra.Command, args []string) error
 	Start(cmd *cobra.Command, args []string) error
 	Stop(cmd *cobra.Command, args []string) error
 	List(cmd *cobra.Command, args []string) error
@@ -37,6 +38,14 @@ func Command(h Actions) *cobra.Command {
 		RunE:  h.Run,
 	}
 	addVMFlags(runCmd)
+
+	cloneCmd := &cobra.Command{
+		Use:   "clone [flags] SNAPSHOT",
+		Short: "Clone a new VM from a snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE:  h.Clone,
+	}
+	addVMFlags(cloneCmd)
 
 	startCmd := &cobra.Command{
 		Use:   "start VM [VM...]",
@@ -98,6 +107,7 @@ func Command(h Actions) *cobra.Command {
 	vmCmd.AddCommand(
 		createCmd,
 		runCmd,
+		cloneCmd,
 		startCmd,
 		stopCmd,
 		listCmd,

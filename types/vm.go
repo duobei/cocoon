@@ -29,9 +29,8 @@ type VM struct {
 	Config VMConfig `json:"config"`
 
 	// Runtime — populated only while State == VMStateRunning.
-	PID         int    `json:"pid,omitempty"`
-	SocketPath  string `json:"socket_path,omitempty"`  // CH API Unix socket
-	ConsolePath string `json:"console_path,omitempty"` // console output endpoint (socket or PTY)
+	PID        int    `json:"pid,omitempty"`
+	SocketPath string `json:"socket_path,omitempty"` // CH API Unix socket
 
 	// Attached resources — promoted into VMRecord via embedding.
 	NetworkConfigs []*NetworkConfig `json:"network_configs,omitempty"`

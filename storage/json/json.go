@@ -61,8 +61,8 @@ func (s *Store[T]) WriteRaw(fn func(*T) error) error {
 	})
 }
 
-// With acquires the lock (blocking), calls Read under lock, then releases.
-func (s *Store[T]) With(ctx context.Context, fn func(*T) error) error {
+// withLocked acquires the lock, runs fn, then releases.
+func (s *Store[T]) withLocked(ctx context.Context, fn func() error) error {
 	if err := s.locker.Lock(ctx); err != nil {
 		return err
 	}
@@ -71,21 +71,18 @@ func (s *Store[T]) With(ctx context.Context, fn func(*T) error) error {
 			log.WithFunc("storage.json").Warnf(ctx, "unlock %s: %v", s.filePath, err)
 		}
 	}()
-	return s.ReadRaw(fn)
+	return fn()
+}
+
+// With acquires the lock (blocking), calls Read under lock, then releases.
+func (s *Store[T]) With(ctx context.Context, fn func(*T) error) error {
+	return s.withLocked(ctx, func() error { return s.ReadRaw(fn) })
 }
 
 // Update acquires the lock (blocking), calls Write under lock, then releases.
 // If fn returns nil the data is atomically persisted.
 func (s *Store[T]) Update(ctx context.Context, fn func(*T) error) error {
-	if err := s.locker.Lock(ctx); err != nil {
-		return err
-	}
-	defer func() {
-		if err := s.locker.Unlock(ctx); err != nil {
-			log.WithFunc("storage.json").Warnf(ctx, "unlock %s: %v", s.filePath, err)
-		}
-	}()
-	return s.WriteRaw(fn)
+	return s.withLocked(ctx, func() error { return s.WriteRaw(fn) })
 }
 
 // TryLock delegates to the underlying locker.

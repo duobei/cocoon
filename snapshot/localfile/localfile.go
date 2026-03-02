@@ -1,11 +1,14 @@
 package localfile
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/projecteru2/core/log"
 
 	"github.com/projecteru2/cocoon/config"
 	"github.com/projecteru2/cocoon/gc"
@@ -69,11 +72,13 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 		}
 		idx.Snapshots[id] = &snapshot.SnapshotRecord{
 			Snapshot: types.Snapshot{
-				ID:           id,
-				Name:         cfg.Name,
-				Description:  cfg.Description,
-				ImageBlobIDs: cfg.ImageBlobIDs,
-				CreatedAt:    now,
+				SnapshotConfig: types.SnapshotConfig{
+					Name:         cfg.Name,
+					Description:  cfg.Description,
+					ImageBlobIDs: cfg.ImageBlobIDs,
+				},
+				ID:        id,
+				CreatedAt: now,
 			},
 			Pending: true,
 			DataDir: dataDir,
@@ -121,11 +126,13 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 
 // rollbackCreate removes a placeholder snapshot record from the DB.
 func (lf *LocalFile) rollbackCreate(ctx context.Context, id, name string) {
-	_ = lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
+	if err := lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
 		delete(idx.Snapshots, id)
 		delete(idx.Names, name)
 		return nil
-	})
+	}); err != nil {
+		log.WithFunc("localfile.rollbackCreate").Warnf(ctx, "rollback snapshot %s (name=%s): %v", id, name, err)
+	}
 }
 
 // List returns all snapshots (excluding pending ones).
@@ -197,6 +204,59 @@ func (lf *LocalFile) Delete(ctx context.Context, refs []string) ([]string, error
 		deleted = append(deleted, id)
 	}
 	return deleted, nil
+}
+
+// Restore returns the snapshot config and a streaming tar reader of the snapshot data.
+func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotConfig, io.ReadCloser, error) {
+	var (
+		cfg     *types.SnapshotConfig
+		dataDir string
+	)
+	if err := lf.store.With(ctx, func(idx *snapshot.SnapshotIndex) error {
+		id, err := snapshot.ResolveSnapshotRef(idx, ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.Snapshots[id]
+		if rec == nil || rec.Pending {
+			return snapshot.ErrNotFound
+		}
+		// Deep copy ImageBlobIDs.
+		blobIDs := make(map[string]struct{}, len(rec.ImageBlobIDs))
+		for k, v := range rec.ImageBlobIDs {
+			blobIDs[k] = v
+		}
+		cfg = &types.SnapshotConfig{
+			Name:         rec.Name,
+			Description:  rec.Description,
+			ImageBlobIDs: blobIDs,
+		}
+		dataDir = rec.DataDir
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
+
+	// Stream the data directory as a tar archive via io.Pipe.
+	pr, pw := io.Pipe()
+	go func() {
+		var streamErr error
+		defer func() {
+			if streamErr != nil {
+				pw.CloseWithError(streamErr) //nolint:errcheck,gosec
+			} else {
+				pw.Close() //nolint:errcheck,gosec
+			}
+		}()
+
+		tw := tar.NewWriter(pw)
+		streamErr = utils.TarDir(tw, dataDir)
+		if closeErr := tw.Close(); streamErr == nil {
+			streamErr = closeErr
+		}
+	}()
+
+	return cfg, pr, nil
 }
 
 // RegisterGC registers the snapshot GC module with the orchestrator.

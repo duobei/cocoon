@@ -100,6 +100,31 @@ func removeVMDirs(runDir, logDir string) error {
 	)
 }
 
+// reserveVM writes a placeholder VMRecord (state=Creating) so that GC won't
+// treat the VM's directories as orphans. Used by both Create and Clone.
+func (ch *CloudHypervisor) reserveVM(ctx context.Context, id string, vmCfg *types.VMConfig, blobIDs map[string]struct{}, runDir, logDir string) error {
+	now := time.Now()
+	return ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
+		if idx.VMs[id] != nil {
+			return fmt.Errorf("ID collision %q (retry)", id)
+		}
+		if dup, ok := idx.Names[vmCfg.Name]; ok {
+			return fmt.Errorf("VM name %q already exists (id: %s)", vmCfg.Name, dup)
+		}
+		idx.VMs[id] = &hypervisor.VMRecord{
+			VM: types.VM{
+				ID: id, State: types.VMStateCreating,
+				Config: *vmCfg, CreatedAt: now, UpdatedAt: now,
+			},
+			ImageBlobIDs: blobIDs,
+			RunDir:       runDir,
+			LogDir:       logDir,
+		}
+		idx.Names[vmCfg.Name] = id
+		return nil
+	})
+}
+
 // rollbackCreate removes a placeholder VM record from the DB.
 func (ch *CloudHypervisor) rollbackCreate(ctx context.Context, id, name string) {
 	if err := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
@@ -109,4 +134,25 @@ func (ch *CloudHypervisor) rollbackCreate(ctx context.Context, id, name string) 
 	}); err != nil {
 		log.WithFunc("cloudhypervisor.rollbackCreate").Warnf(ctx, "rollback VM %s (name=%s): %v", id, name, err)
 	}
+}
+
+// resolveConsole determines the console path for a VM after launch.
+// Direct-boot (OCI) VMs use a PTY allocated by CH; UEFI VMs use a Unix socket.
+func resolveConsole(ctx context.Context, vmID, sockPath, consoleSock string, directBoot bool) string {
+	if directBoot {
+		consolePath, err := utils.DoWithRetry(ctx, func() (string, error) {
+			return queryConsolePTY(ctx, sockPath)
+		})
+		if err != nil {
+			log.WithFunc("cloudhypervisor.resolveConsole").Warnf(ctx, "query console PTY for %s: %v", vmID, err)
+		}
+		return consolePath
+	}
+	return consoleSock
+}
+
+// abortLaunch kills a CH process and removes runtime files after a failed launch sequence.
+func (ch *CloudHypervisor) abortLaunch(ctx context.Context, pid int, sockPath, runDir string) {
+	_ = utils.TerminateProcess(ctx, pid, ch.chBinaryName(), sockPath, terminateGracePeriod)
+	cleanupRuntimeFiles(runDir)
 }

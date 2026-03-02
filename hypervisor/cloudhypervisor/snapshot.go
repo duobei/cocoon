@@ -17,14 +17,20 @@ import (
 
 // snapshotReader wraps io.PipeReader so that Close waits for the background
 // goroutine to finish cleanup (removing tmpDir) before returning.
+// streamErr captures the goroutine's error so Close can surface it even
+// after all data has been read (PipeReader.Close always returns nil).
 type snapshotReader struct {
 	*io.PipeReader
-	done <-chan struct{}
+	done      <-chan struct{}
+	streamErr *error
 }
 
 func (r *snapshotReader) Close() error {
 	err := r.PipeReader.Close()
 	<-r.done
+	if *r.streamErr != nil {
+		return *r.streamErr
+	}
 	return err
 }
 
@@ -107,10 +113,10 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	// always removed before the process exits.
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
+	var streamErr error
 	go func() {
 		defer close(done)
 		defer os.RemoveAll(tmpDir) //nolint:errcheck
-		var streamErr error
 		defer func() {
 			if streamErr != nil {
 				pw.CloseWithError(streamErr) //nolint:errcheck,gosec
@@ -127,5 +133,5 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 		}
 	}()
 
-	return cfg, &snapshotReader{PipeReader: pr, done: done}, nil
+	return cfg, &snapshotReader{PipeReader: pr, done: done, streamErr: &streamErr}, nil
 }

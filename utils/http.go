@@ -58,12 +58,16 @@ func DoAPI(ctx context.Context, hc *http.Client, method, url string, body []byte
 		return nil, fmt.Errorf("%s %s: %w", method, url, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	rb, _ := io.ReadAll(resp.Body)
+	rb, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode != expectedStatus {
-		return nil, &APIError{
-			Code:    resp.StatusCode,
-			Message: fmt.Sprintf("%s %s → %d: %s", method, url, resp.StatusCode, rb),
+		msg := fmt.Sprintf("%s %s → %d: %s", method, url, resp.StatusCode, rb)
+		if readErr != nil {
+			msg += fmt.Sprintf(" (body read error: %v)", readErr)
 		}
+		return nil, &APIError{Code: resp.StatusCode, Message: msg}
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("read response body %s %s: %w", method, url, readErr)
 	}
 	return rb, nil
 }

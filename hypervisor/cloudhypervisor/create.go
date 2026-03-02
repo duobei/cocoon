@@ -44,26 +44,8 @@ func (ch *CloudHypervisor) Create(ctx context.Context, id string, vmCfg *types.V
 	}()
 
 	// Step 1: write a placeholder record so GC won't treat our dirs as orphans.
-	if updateErr := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
-		if idx.VMs[id] != nil {
-			return fmt.Errorf("ID collision %q (retry)", id)
-		}
-		if dup, ok := idx.Names[vmCfg.Name]; ok {
-			return fmt.Errorf("VM name %q already exists (id: %s)", vmCfg.Name, dup)
-		}
-		idx.VMs[id] = &hypervisor.VMRecord{
-			VM: types.VM{
-				ID: id, State: types.VMStateCreating,
-				Config: *vmCfg, CreatedAt: now, UpdatedAt: now,
-			},
-			ImageBlobIDs: blobIDs,
-			RunDir:       runDir,
-			LogDir:       logDir,
-		}
-		idx.Names[vmCfg.Name] = id
-		return nil
-	}); updateErr != nil {
-		return nil, fmt.Errorf("reserve VM record: %w", updateErr)
+	if err := ch.reserveVM(ctx, id, vmCfg, blobIDs, runDir, logDir); err != nil {
+		return nil, fmt.Errorf("reserve VM record: %w", err)
 	}
 
 	// Step 2: create directories and prepare disks.

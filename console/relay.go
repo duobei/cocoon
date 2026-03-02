@@ -82,20 +82,20 @@ func ParseEscapeChar(s string) (byte, error) {
 	if len(s) == 2 && s[0] == '^' {
 		c := s[1]
 		if c >= '@' && c <= '_' {
-			return validateEscapeByte(c-'@', s)
+			return validateEscapeByte(c - '@')
 		}
 		if c >= 'a' && c <= 'z' {
-			return validateEscapeByte(c-'a'+1, s)
+			return validateEscapeByte(c - 'a' + 1)
 		}
 		return 0, fmt.Errorf("invalid caret notation %q (use ^A through ^_ or ^a through ^z)", s)
 	}
 	if len(s) == 1 {
-		return validateEscapeByte(s[0], s)
+		return validateEscapeByte(s[0])
 	}
 	return 0, fmt.Errorf("escape-char must be a single character or ^X caret notation, got %q", s)
 }
 
-func validateEscapeByte(b byte, original string) (byte, error) {
+func validateEscapeByte(b byte) (byte, error) {
 	switch {
 	case b == 0:
 		return 0, fmt.Errorf("NUL cannot be used as escape character")
@@ -106,7 +106,6 @@ func validateEscapeByte(b byte, original string) (byte, error) {
 	case b >= 0x80: //nolint:mnd
 		return 0, fmt.Errorf("non-ASCII byte 0x%02X cannot be used as escape character", b)
 	}
-	_ = original // used in older validation messages, kept for signature compat
 	return b, nil
 }
 

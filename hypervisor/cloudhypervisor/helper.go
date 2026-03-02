@@ -60,6 +60,16 @@ func snapshotVM(ctx context.Context, hc *http.Client, destDir string) error {
 	return vmAPI(ctx, hc, "vm.snapshot", body)
 }
 
+func restoreVM(ctx context.Context, hc *http.Client, sourceDir string) error {
+	body, err := json.Marshal(map[string]string{
+		"source_url": "file://" + sourceDir,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal restore request: %w", err)
+	}
+	return vmAPI(ctx, hc, "vm.restore", body)
+}
+
 func powerButton(ctx context.Context, hc *http.Client) error {
 	return vmAPI(ctx, hc, "vm.power-button", nil)
 }

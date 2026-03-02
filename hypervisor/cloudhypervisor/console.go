@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 )
 
 // Console connects to the VM's console output and returns a bidirectional stream.
@@ -13,7 +14,9 @@ import (
 // For UEFI-boot VMs (cloudimg): connects to the serial socket (console.sock).
 // For direct-boot VMs (OCI):    opens the virtio-console PTY allocated by CH.
 //
-// The endpoint is stored in VM.ConsolePath at start time.
+// The console path is resolved lazily on first access via the CH API
+// (OCI/PTY) or the deterministic socket path (UEFI), so callers like
+// Clone and Start don't need to query it upfront.
 // The caller is responsible for closing the returned ReadWriteCloser.
 func (ch *CloudHypervisor) Console(ctx context.Context, ref string) (io.ReadWriteCloser, error) {
 	id, err := ch.resolveRef(ctx, ref)
@@ -28,7 +31,10 @@ func (ch *CloudHypervisor) Console(ctx context.Context, ref string) (io.ReadWrit
 
 	var conn io.ReadWriteCloser
 	if err := ch.withRunningVM(&rec, func(_ int) error {
-		path := rec.ConsolePath
+		// Resolve on demand: query CH API for PTY (OCI) or use deterministic socket (UEFI).
+		path := resolveConsole(ctx, id, socketPath(rec.RunDir),
+			filepath.Join(rec.RunDir, "console.sock"),
+			isDirectBoot(rec.BootConfig))
 		if path == "" {
 			return fmt.Errorf("no console path for VM %s", id)
 		}

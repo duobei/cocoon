@@ -14,14 +14,9 @@ const (
 	seekHole = 4 // SEEK_HOLE
 )
 
-type dataSegment struct {
-	Offset int64
-	Length int64
-}
-
 // scanDataSegments uses SEEK_DATA/SEEK_HOLE to find all data regions in f.
-func scanDataSegments(fd int, size int64) ([]dataSegment, error) {
-	var segments []dataSegment
+func scanDataSegments(fd int, size int64) ([]sparseSegment, error) {
+	var segments []sparseSegment
 	offset := int64(0)
 
 	for offset < size {
@@ -46,7 +41,7 @@ func scanDataSegments(fd int, size int64) ([]dataSegment, error) {
 			}
 		}
 
-		segments = append(segments, dataSegment{
+		segments = append(segments, sparseSegment{
 			Offset: dataStart,
 			Length: holeStart - dataStart,
 		})

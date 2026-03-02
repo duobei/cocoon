@@ -58,6 +58,83 @@ func (h Handler) Run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func (h Handler) Clone(cmd *cobra.Command, args []string) error {
+	ctx, conf, err := h.Init(cmd)
+	if err != nil {
+		return err
+	}
+	logger := log.WithFunc("cmd.clone")
+
+	hyper, err := cmdcore.InitHypervisor(conf)
+	if err != nil {
+		return err
+	}
+	snapBackend, err := cmdcore.InitSnapshot(conf)
+	if err != nil {
+		return err
+	}
+
+	snapRef := args[0]
+	cfg, stream, err := snapBackend.Restore(ctx, snapRef)
+	if err != nil {
+		return fmt.Errorf("open snapshot %s: %w", snapRef, err)
+	}
+	defer stream.Close() //nolint:errcheck
+
+	// Close stream on context cancellation so Ctrl+C doesn't hang.
+	stop := context.AfterFunc(ctx, func() {
+		stream.Close() //nolint:errcheck,gosec
+	})
+	defer stop()
+
+	// Build VMConfig from flags (same flags as create/run).
+	vmCfg, err := cmdcore.VMConfigFromFlags(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	vmID, err := utils.GenerateID()
+	if err != nil {
+		return fmt.Errorf("generate VM ID: %w", err)
+	}
+	if vmCfg.Name == "" {
+		vmCfg.Name = "cocoon-clone-" + vmID[:8]
+	}
+
+	// Create network (same pattern as createVM).
+	var (
+		networkConfigs []*types.NetworkConfig
+		netProvider    network.Network
+	)
+	nics, _ := cmd.Flags().GetInt("nics")
+	if nics > 0 {
+		var initErr error
+		netProvider, initErr = cmdcore.InitNetwork(conf)
+		if initErr != nil {
+			return fmt.Errorf("init network: %w", initErr)
+		}
+		networkConfigs, err = netProvider.Config(ctx, vmID, nics, vmCfg)
+		if err != nil {
+			return fmt.Errorf("configure network: %w", err)
+		}
+	}
+
+	logger.Infof(ctx, "cloning VM from snapshot %s ...", snapRef)
+
+	vm, cloneErr := hyper.Clone(ctx, vmID, vmCfg, cfg, networkConfigs, stream)
+	if cloneErr != nil {
+		if netProvider != nil {
+			if _, delErr := netProvider.Delete(ctx, []string{vmID}); delErr != nil {
+				logger.Warnf(ctx, "rollback network for %s: %v", vmID, delErr)
+			}
+		}
+		return fmt.Errorf("clone VM: %w", cloneErr)
+	}
+
+	logger.Infof(ctx, "VM cloned: %s (name: %s)", vm.ID, vm.Config.Name)
+	return nil
+}
+
 func (h Handler) Start(cmd *cobra.Command, args []string) error {
 	ctx, conf, err := h.Init(cmd)
 	if err != nil {

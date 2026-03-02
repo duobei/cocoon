@@ -62,11 +62,7 @@ func tarFileMaybeSparse(tw *tar.Writer, path, nameInTar string) error {
 	}
 
 	// Convert data segments to JSON for PAX record.
-	sparseSegs := make([]sparseSegment, len(segments))
-	for i, seg := range segments {
-		sparseSegs[i] = sparseSegment(seg)
-	}
-	mapJSON, err := json.Marshal(sparseSegs)
+	mapJSON, err := json.Marshal(segments)
 	if err != nil {
 		return fmt.Errorf("marshal sparse map for %s: %w", path, err)
 	}

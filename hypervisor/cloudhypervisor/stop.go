@@ -101,7 +101,7 @@ func (ch *CloudHypervisor) shutdownUEFI(ctx context.Context, hc *http.Client, vm
 // cloud-hypervisor before sending signals to avoid killing a reused PID.
 func (ch *CloudHypervisor) forceTerminate(ctx context.Context, hc *http.Client, vmID, socketPath string, pid int) error {
 	if err := shutdownVM(ctx, hc); err != nil {
-		log.WithFunc("cloudhypervisor.forceTerminate").Errorf(ctx, err, "vm.shutdown %s", vmID)
+		log.WithFunc("cloudhypervisor.forceTerminate").Warnf(ctx, "vm.shutdown %s: %v", vmID, err)
 	}
 	return utils.TerminateProcess(ctx, pid, ch.chBinaryName(), socketPath, terminateGracePeriod)
 }

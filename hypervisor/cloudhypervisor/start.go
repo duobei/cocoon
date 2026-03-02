@@ -80,19 +80,7 @@ func (ch *CloudHypervisor) startOne(ctx context.Context, id string) error {
 		return fmt.Errorf("launch VM: %w", err)
 	}
 
-	var consolePath string
-	if isDirectBoot(rec.BootConfig) {
-		var ptyErr error
-		if consolePath, ptyErr = utils.DoWithRetry(ctx, func() (string, error) {
-			return queryConsolePTY(ctx, socketPath)
-		}); ptyErr != nil {
-			log.WithFunc("cloudhypervisor.startOne").Warnf(ctx, "query console PTY for %s: %v", id, ptyErr)
-		}
-	} else {
-		consolePath = consoleSock
-	}
-
-	// Persist running state + console path.
+	// Persist running state. Console path is resolved lazily by Console() on first access.
 	now := time.Now()
 	if err := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
 		r := idx.VMs[id]
@@ -102,12 +90,10 @@ func (ch *CloudHypervisor) startOne(ctx context.Context, id string) error {
 		r.State = types.VMStateRunning
 		r.StartedAt = &now
 		r.UpdatedAt = now
-		r.ConsolePath = consolePath
 		r.FirstBooted = true
 		return nil
 	}); err != nil {
-		_ = utils.TerminateProcess(ctx, pid, ch.chBinaryName(), socketPath, terminateGracePeriod)
-		cleanupRuntimeFiles(rec.RunDir)
+		ch.abortLaunch(ctx, pid, socketPath, rec.RunDir)
 		return fmt.Errorf("update state: %w", err)
 	}
 	return nil
