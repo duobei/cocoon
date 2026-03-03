@@ -35,9 +35,26 @@ func ReverseLayerSerials(storageConfigs []*types.StorageConfig) []string {
 
 // vmAPI sends a PUT request to a Cloud Hypervisor REST API endpoint.
 // Reuses the provided http.Client to avoid creating a new client per call.
-func vmAPI(ctx context.Context, hc *http.Client, endpoint string, body []byte) error {
+func vmAPI(ctx context.Context, hc *http.Client, endpoint string, body []byte, successCodes ...int) error {
+	if len(successCodes) == 0 {
+		successCodes = []int{http.StatusNoContent}
+	}
+	primaryCode := successCodes[0]
+
 	_, err := utils.DoWithRetry(ctx, func() ([]byte, error) {
-		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/"+endpoint, body, http.StatusNoContent)
+		resp, apiErr := utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/"+endpoint, body, primaryCode)
+		if apiErr == nil {
+			return resp, nil
+		}
+		var ae *utils.APIError
+		if errors.As(apiErr, &ae) {
+			for _, code := range successCodes[1:] {
+				if ae.Code == code {
+					return nil, nil
+				}
+			}
+		}
+		return nil, apiErr
 	})
 	return err
 }
@@ -79,7 +96,7 @@ func addDiskVM(ctx context.Context, hc *http.Client, disk chDisk) error {
 	if err != nil {
 		return fmt.Errorf("marshal add-disk request: %w", err)
 	}
-	return vmAPI(ctx, hc, "vm.add-disk", body)
+	return vmAPI(ctx, hc, "vm.add-disk", body, http.StatusOK, http.StatusNoContent)
 }
 
 func powerButton(ctx context.Context, hc *http.Client) error {
