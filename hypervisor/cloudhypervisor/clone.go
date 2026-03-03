@@ -143,6 +143,12 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 		return nil, fmt.Errorf("patch state.json: %w", err)
 	}
 
+	// Update bootCfg.Cmdline so that restarts (not just the initial restore)
+	// use the clone's cmdline (new VM name, IP, DNS).
+	if directBoot && bootCfg != nil {
+		bootCfg.Cmdline = buildCmdline(storageConfigs, networkConfigs, vmCfg.Name, ch.conf.DNSServers())
+	}
+
 	// Phase 3: launch CH, restore snapshot, finalize record.
 	// Launch CH process with only --api-socket.
 	sockPath := socketPath(runDir)
