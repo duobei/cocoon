@@ -47,12 +47,8 @@ func vmAPI(ctx context.Context, hc *http.Client, endpoint string, body []byte, s
 			return resp, nil
 		}
 		var ae *utils.APIError
-		if errors.As(apiErr, &ae) {
-			for _, code := range successCodes[1:] {
-				if ae.Code == code {
-					return nil, nil
-				}
-			}
+		if errors.As(apiErr, &ae) && slices.Contains(successCodes[1:], ae.Code) {
+			return nil, nil
 		}
 		return nil, apiErr
 	})

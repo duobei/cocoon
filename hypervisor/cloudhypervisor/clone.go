@@ -76,16 +76,7 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	}
 
 	// Update cidata path (cloudimg only; may be absent if snapshot was taken after restart).
-	cidataPath := ch.conf.CidataPath(vmID)
-	hadCidataInSnapshot := false
-	if !directBoot {
-		for _, sc := range storageConfigs {
-			if isCidataDisk(sc) {
-				sc.Path = cidataPath
-				hadCidataInSnapshot = true
-			}
-		}
-	}
+	hadCidataInSnapshot := updateCloneCidataPath(storageConfigs, directBoot, ch.conf.CidataPath(vmID))
 
 	if err = verifyBaseFiles(storageConfigs, bootCfg); err != nil {
 		return nil, fmt.Errorf("verify base files: %w", err)
@@ -99,25 +90,14 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	stateReplacements := buildStateReplacements(chCfg, storageConfigs, networkConfigs)
 
 	// Cloudimg: regenerate cidata with clone's identity and network config.
-	if !directBoot {
-		if err = ch.generateCidata(vmID, vmCfg, networkConfigs); err != nil {
-			return nil, fmt.Errorf("generate cidata: %w", err)
-		}
-		// Keep cidata in VM record for future starts; snapshot may not carry it.
-		if !slices.ContainsFunc(storageConfigs, isCidataDisk) {
-			storageConfigs = append(storageConfigs, &types.StorageConfig{
-				Path: cidataPath,
-				RO:   true,
-			})
-		}
+	storageConfigs, err = ch.ensureCloneCidata(vmID, vmCfg, networkConfigs, storageConfigs, directBoot)
+	if err != nil {
+		return nil, err
 	}
 
 	// vm.restore requires config/state device tree equality.
 	// If snapshot had no cidata disk, patch only snapshot disks and hotplug cidata later.
-	patchStorageConfigs := storageConfigs
-	if !directBoot && !hadCidataInSnapshot {
-		patchStorageConfigs = storageConfigs[:len(storageConfigs)-1]
-	}
+	patchStorageConfigs := restorePatchStorageConfigs(storageConfigs, directBoot, hadCidataInSnapshot)
 
 	consoleSock := filepath.Join(runDir, "console.sock")
 	if err = patchCHConfig(chConfigPath, &patchOptions{
@@ -160,21 +140,8 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 		return nil, fmt.Errorf("launch CH: %w", err)
 	}
 
-	hc := utils.NewSocketHTTPClient(sockPath)
-	if err := restoreVM(ctx, hc, runDir); err != nil {
-		ch.abortLaunch(ctx, pid, sockPath, runDir)
-		return nil, fmt.Errorf("vm.restore: %w", err)
-	}
-	if !directBoot && !hadCidataInSnapshot {
-		cidataDisk := storageConfigToDisk(storageConfigs[len(storageConfigs)-1], vmCfg.CPU)
-		if err := addDiskVM(ctx, hc, cidataDisk); err != nil {
-			ch.abortLaunch(ctx, pid, sockPath, runDir)
-			return nil, fmt.Errorf("vm.add-disk (cidata): %w", err)
-		}
-	}
-	if err := resumeVM(ctx, hc); err != nil {
-		ch.abortLaunch(ctx, pid, sockPath, runDir)
-		return nil, fmt.Errorf("vm.resume: %w", err)
+	if err := ch.restoreAndResumeClone(ctx, pid, sockPath, runDir, directBoot, hadCidataInSnapshot, storageConfigs, vmCfg.CPU); err != nil {
+		return nil, err
 	}
 
 	// Finalize record → Running.
@@ -207,6 +174,37 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	success = true
 	logger.Infof(ctx, "VM %s cloned from snapshot", vmID)
 	return &info, nil
+}
+
+func (ch *CloudHypervisor) restoreAndResumeClone(
+	ctx context.Context,
+	pid int,
+	sockPath, runDir string,
+	directBoot, hadCidataInSnapshot bool,
+	storageConfigs []*types.StorageConfig,
+	cpu int,
+) error {
+	hc := utils.NewSocketHTTPClient(sockPath)
+	if err := restoreVM(ctx, hc, runDir); err != nil {
+		ch.abortLaunch(ctx, pid, sockPath, runDir)
+		return fmt.Errorf("vm.restore: %w", err)
+	}
+	if !directBoot && !hadCidataInSnapshot {
+		if len(storageConfigs) == 0 {
+			ch.abortLaunch(ctx, pid, sockPath, runDir)
+			return fmt.Errorf("vm.add-disk (cidata): missing storage config")
+		}
+		cidataDisk := storageConfigToDisk(storageConfigs[len(storageConfigs)-1], cpu)
+		if err := addDiskVM(ctx, hc, cidataDisk); err != nil {
+			ch.abortLaunch(ctx, pid, sockPath, runDir)
+			return fmt.Errorf("vm.add-disk (cidata): %w", err)
+		}
+	}
+	if err := resumeVM(ctx, hc); err != nil {
+		ch.abortLaunch(ctx, pid, sockPath, runDir)
+		return fmt.Errorf("vm.resume: %w", err)
+	}
+	return nil
 }
 
 func parseCHConfig(path string) (*chVMConfig, error) {
@@ -247,6 +245,45 @@ func rebuildBootConfig(cfg *chVMConfig) *types.BootConfig {
 		Cmdline:      p.Cmdline,
 		FirmwarePath: p.Firmware,
 	}
+}
+
+func updateCloneCidataPath(storageConfigs []*types.StorageConfig, directBoot bool, cidataPath string) bool {
+	if directBoot {
+		return false
+	}
+	hadCidataInSnapshot := false
+	for _, sc := range storageConfigs {
+		if isCidataDisk(sc) {
+			sc.Path = cidataPath
+			hadCidataInSnapshot = true
+		}
+	}
+	return hadCidataInSnapshot
+}
+
+func (ch *CloudHypervisor) ensureCloneCidata(vmID string, vmCfg *types.VMConfig, networkConfigs []*types.NetworkConfig, storageConfigs []*types.StorageConfig, directBoot bool) ([]*types.StorageConfig, error) {
+	if directBoot {
+		return storageConfigs, nil
+	}
+	if err := ch.generateCidata(vmID, vmCfg, networkConfigs); err != nil {
+		return nil, fmt.Errorf("generate cidata: %w", err)
+	}
+	cidataPath := ch.conf.CidataPath(vmID)
+	// Keep cidata in VM record for future starts; snapshot may not carry it.
+	if !slices.ContainsFunc(storageConfigs, isCidataDisk) {
+		storageConfigs = append(storageConfigs, &types.StorageConfig{
+			Path: cidataPath,
+			RO:   true,
+		})
+	}
+	return storageConfigs, nil
+}
+
+func restorePatchStorageConfigs(storageConfigs []*types.StorageConfig, directBoot, hadCidataInSnapshot bool) []*types.StorageConfig {
+	if directBoot || hadCidataInSnapshot || len(storageConfigs) == 0 {
+		return storageConfigs
+	}
+	return storageConfigs[:len(storageConfigs)-1]
 }
 
 func verifyBaseFiles(storageConfigs []*types.StorageConfig, boot *types.BootConfig) error {

@@ -26,6 +26,9 @@ func TestUserData_NoBootcmd(t *testing.T) {
 	if !strings.Contains(out, "root:test") {
 		t.Errorf("root password missing: %s", out)
 	}
+	if !strings.Contains(out, "dsid_missing_source: off") {
+		t.Errorf("cloud-init warning suppression missing: %s", out)
+	}
 	if !strings.Contains(out, "write_files:") {
 		t.Errorf("write_files missing: %s", out)
 	}
@@ -234,6 +237,9 @@ func TestGenerate_NoNetworks(t *testing.T) {
 	raw := buf.String()
 	if strings.Contains(raw, "ethernets:") {
 		t.Error("network-config should not appear without networks")
+	}
+	if !strings.Contains(raw, "dsid_missing_source: off") {
+		t.Error("cloud-init warning suppression should always appear in user-data")
 	}
 	if strings.Contains(raw, "write_files:") {
 		t.Error("write_files should not appear without networks")

@@ -26,6 +26,8 @@ var (
 	// It also writes fallback systemd-networkd units matching current MAC so
 	// clone reinit can survive netplan PERM-MAC mismatch on later reboots.
 	userDataTmpl = template.Must(template.New("user-data").Funcs(tmplFuncs).Parse(`#cloud-config
+warnings:
+  dsid_missing_source: off
 {{- if .RootPassword}}
 chpasswd:
   expire: false
