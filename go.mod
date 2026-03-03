@@ -3,13 +3,13 @@ module github.com/projecteru2/cocoon
 go 1.25.6
 
 require (
-	github.com/containerd/console v1.0.5
 	github.com/containernetworking/cni v1.3.0
 	github.com/containernetworking/plugins v1.9.0
 	github.com/docker/go-units v0.5.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-containerregistry v0.21.0
 	github.com/google/uuid v1.6.0
+	github.com/moby/term v0.5.2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/projecteru2/core v0.0.0-20241016125006-ff909eefe04c
 	github.com/spf13/cobra v1.10.2
@@ -20,6 +20,7 @@ require (
 )
 
 require (
+	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/alphadose/haxmap v1.4.1 // indirect
 	github.com/cockroachdb/errors v1.12.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect

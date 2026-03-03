@@ -101,20 +101,20 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	}
 
 	// Verify base layer files exist.
-	if err := verifyBaseFiles(storageConfigs, bootCfg); err != nil {
+	if err = verifyBaseFiles(storageConfigs, bootCfg); err != nil {
 		return nil, fmt.Errorf("verify base files: %w", err)
 	}
 
 	// Resize COW disk if user specified a larger --storage.
 	if vmCfg.Storage > 0 {
-		if err := resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
+		if err = resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
 			return nil, fmt.Errorf("resize COW: %w", err)
 		}
 	}
 
 	// Patch CH config.json with new paths, network, and resources.
 	consoleSock := filepath.Join(runDir, "console.sock")
-	if err := patchCHConfig(chConfigPath, &patchOptions{
+	if err = patchCHConfig(chConfigPath, &patchOptions{
 		storageConfigs: storageConfigs,
 		networkConfigs: networkConfigs,
 		consoleSock:    consoleSock,
@@ -132,9 +132,9 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 
 	withNetwork := len(networkConfigs) > 0
 	pid, err := ch.launchProcess(ctx, &hypervisor.VMRecord{
-		VM:             types.VM{NetworkConfigs: networkConfigs},
-		RunDir:         runDir,
-		LogDir:         logDir,
+		VM:     types.VM{NetworkConfigs: networkConfigs},
+		RunDir: runDir,
+		LogDir: logDir,
 	}, sockPath, args, withNetwork)
 	if err != nil {
 		ch.markError(ctx, vmID)
@@ -156,11 +156,13 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	// Finalize VMRecord → Running.
 	// Console path is resolved lazily by Console() on first access.
 	info := types.VM{
-		ID: vmID, State: types.VMStateRunning,
+		ID:             vmID,
+		State:          types.VMStateRunning,
 		Config:         *vmCfg,
 		StorageConfigs: storageConfigs,
 		NetworkConfigs: networkConfigs,
-		CreatedAt:      now, UpdatedAt: now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 		StartedAt:      &now,
 	}
 	if err := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
@@ -236,21 +238,22 @@ func verifyBaseFiles(storageConfigs []*types.StorageConfig, boot *types.BootConf
 			return fmt.Errorf("base layer %s: %w", sc.Path, err)
 		}
 	}
-	if boot != nil {
-		if boot.KernelPath != "" {
-			if _, err := os.Stat(boot.KernelPath); err != nil {
-				return fmt.Errorf("kernel %s: %w", boot.KernelPath, err)
-			}
+	if boot == nil {
+		return nil
+	}
+	if boot.KernelPath != "" {
+		if _, err := os.Stat(boot.KernelPath); err != nil {
+			return fmt.Errorf("kernel %s: %w", boot.KernelPath, err)
 		}
-		if boot.InitrdPath != "" {
-			if _, err := os.Stat(boot.InitrdPath); err != nil {
-				return fmt.Errorf("initrd %s: %w", boot.InitrdPath, err)
-			}
+	}
+	if boot.InitrdPath != "" {
+		if _, err := os.Stat(boot.InitrdPath); err != nil {
+			return fmt.Errorf("initrd %s: %w", boot.InitrdPath, err)
 		}
-		if boot.FirmwarePath != "" {
-			if _, err := os.Stat(boot.FirmwarePath); err != nil {
-				return fmt.Errorf("firmware %s: %w", boot.FirmwarePath, err)
-			}
+	}
+	if boot.FirmwarePath != "" {
+		if _, err := os.Stat(boot.FirmwarePath); err != nil {
+			return fmt.Errorf("firmware %s: %w", boot.FirmwarePath, err)
 		}
 	}
 	return nil

@@ -44,7 +44,7 @@ func (ch *CloudHypervisor) Create(ctx context.Context, id string, vmCfg *types.V
 	}()
 
 	// Step 1: write a placeholder record so GC won't treat our dirs as orphans.
-	if err := ch.reserveVM(ctx, id, vmCfg, blobIDs, runDir, logDir); err != nil {
+	if err = ch.reserveVM(ctx, id, vmCfg, blobIDs, runDir, logDir); err != nil {
 		return nil, fmt.Errorf("reserve VM record: %w", err)
 	}
 

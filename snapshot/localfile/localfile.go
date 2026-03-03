@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"time"
 
@@ -223,9 +224,7 @@ func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotCo
 		}
 		// Deep copy ImageBlobIDs.
 		blobIDs := make(map[string]struct{}, len(rec.ImageBlobIDs))
-		for k, v := range rec.ImageBlobIDs {
-			blobIDs[k] = v
-		}
+		maps.Copy(blobIDs, rec.ImageBlobIDs)
 		cfg = &types.SnapshotConfig{
 			Name:         rec.Name,
 			Description:  rec.Description,

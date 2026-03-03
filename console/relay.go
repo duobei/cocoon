@@ -1,12 +1,13 @@
 package console
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"syscall"
+
+	"github.com/moby/term"
 )
 
 const DefaultEscapeChar byte = 0x1D // Ctrl+]
@@ -15,56 +16,35 @@ const DefaultEscapeChar byte = 0x1D // Ctrl+]
 // rw can be a PTY (*os.File) or a Unix socket (net.Conn) — any io.ReadWriter.
 // escapeKeys is the byte sequence that triggers a detach (e.g. {0x1D, '.'}).
 // Returns nil on clean disconnect (escape sequence, EOF, or EIO).
-func Relay(ctx context.Context, rw io.ReadWriter, escapeKeys []byte) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
+//
+// The caller is responsible for closing the underlying connection after Relay
+// returns, which unblocks the remaining goroutine.
+func Relay(rw io.ReadWriter, escapeKeys []byte) error {
 	errCh := make(chan error, 2) //nolint:mnd
 
 	// remote → stdout (guest output to user).
 	go func() {
 		_, err := io.Copy(os.Stdout, rw)
 		errCh <- err
-		cancel()
 	}()
 
 	// stdin → remote (user input to guest), with escape detection.
 	go func() {
-		proxy := NewEscapeProxy(ctxReader(ctx, os.Stdin), escapeKeys)
-		_, err := io.Copy(rw, proxy)
+		var r io.Reader = os.Stdin
+		if len(escapeKeys) > 0 {
+			r = term.NewEscapeProxy(os.Stdin, escapeKeys)
+		}
+		_, err := io.Copy(rw, r)
 		errCh <- err
-		cancel()
 	}()
 
-	var firstErr error
-	select {
-	case <-ctx.Done():
-		select {
-		case err := <-errCh:
-			if err != nil && !isCleanExit(err) {
-				return err
-			}
-		default:
-		}
-		return nil
-	case firstErr = <-errCh:
-	}
-
-	if firstErr == nil || isCleanExit(firstErr) {
-		// Non-blocking: io.Copy on the remote side does NOT check ctx — it
-		// only returns when rw is closed.  The caller's defer conn.Close()
-		// handles that after Relay returns.  errCh has cap 2 so the
-		// goroutine won't leak.
-		select {
-		case secondErr := <-errCh:
-			if secondErr != nil && !isCleanExit(secondErr) {
-				return secondErr
-			}
-		default:
-		}
+	// Wait for the first goroutine to finish. The caller's defer conn.Close()
+	// unblocks the other goroutine after Relay returns.
+	err := <-errCh
+	if isCleanExit(err) {
 		return nil
 	}
-	return firstErr
+	return err
 }
 
 // FormatEscapeChar returns a human-readable representation of the escape byte.
@@ -111,35 +91,9 @@ func validateEscapeByte(b byte) (byte, error) {
 
 // isCleanExit returns true for errors that indicate a normal disconnect.
 func isCleanExit(err error) bool {
-	var escErr EscapeError
+	if err == nil {
+		return true
+	}
+	var escErr term.EscapeError
 	return errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO) || errors.As(err, &escErr)
-}
-
-// ctxReader wraps an io.Reader so that reads are abandoned when ctx is canceled.
-// This is needed because os.Stdin.Read blocks and cannot be interrupted.
-type ctxReaderWrapper struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func ctxReader(ctx context.Context, r io.Reader) io.Reader {
-	return &ctxReaderWrapper{ctx: ctx, r: r}
-}
-
-func (cr *ctxReaderWrapper) Read(p []byte) (int, error) {
-	type result struct {
-		n   int
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		n, err := cr.r.Read(p)
-		ch <- result{n, err}
-	}()
-	select {
-	case <-cr.ctx.Done():
-		return 0, cr.ctx.Err()
-	case r := <-ch:
-		return r.n, r.err
-	}
 }
