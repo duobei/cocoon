@@ -1,21 +1,21 @@
-# cocoon OCI image: Ubuntu 24.04 + redroid via systemd-nspawn (no Docker).
+# cocoon OCI image: Ubuntu 24.04 + redroid via unshare+chroot (no Docker, no nspawn).
 #
-# Architecture: Host → cocoon VM (this image) → systemd-nspawn → Android (redroid)
+# Architecture: Host → cocoon VM (this image) → unshare+chroot → Android (redroid)
 # Remote access: scrcpy/adb connects to <vm-ip>:5555
 #
 # vs Docker-based variant (24.04-redroid):
 # - No Docker daemon (no dockerd/containerd/vfs overhead)
 # - Android rootfs baked into image (no first-boot pull needed)
-# - systemd-nspawn for lightweight containment
+# - Minimal namespace isolation (PID + mount only), full /dev access
 #
 # Uses linux-image-generic (not virtual) because binder_linux is only
 # available in linux-modules-extra-*-generic.
 #
 # Notes:
-# - nspawn runs without --boot; explicitly invokes /init so Android init
-#   is PID 1 and receives androidboot.* via /proc/self/cmdline
-# - --capability=all: equivalent to Docker --privileged for Android init
-# - No --private-network: container shares VM network (like --network=host)
+# - unshare --pid --mount --fork + chroot runs Android init as PID 1
+#   in its own PID namespace, with shared host /dev (loop, dm, fuse all available)
+# - androidboot.* params passed as args to /init (read via /proc/self/cmdline)
+# - No network namespace: container shares VM network (port 5555 on VM IP)
 # - binder_linux loaded at boot via systemd-modules-load
 
 FROM redroid/redroid:16.0.0-latest AS android-rootfs
@@ -29,7 +29,6 @@ RUN --mount=type=secret,id=cocoon_overlay \
     linux-image-generic \
     initramfs-tools \
     systemd systemd-sysv systemd-timesyncd systemd-resolved \
-    systemd-container \
     udev kmod iproute2 iputils-ping curl ca-certificates net-tools \
     htop ncdu nload tree \
     && \
@@ -54,17 +53,14 @@ RUN --mount=type=secret,id=cocoon_overlay \
     mkdir -p /etc/systemd/network && \
     printf "[Match]\nName=e* v*\n[Network]\nDHCP=yes\n" > /etc/systemd/network/20-wired.network && \
     # --- binder kernel module ---
-    # binder_linux loaded at boot; use_memfd=1 replaces ashmem
     printf "binder_linux\n" > /etc/modules-load.d/redroid.conf && \
     echo 'options binder_linux devices="binder,hwbinder,vndbinder"' > /etc/modprobe.d/redroid.conf && \
-    # --- redroid nspawn service ---
-    # No --boot: explicitly run /init so androidboot.* params appear in
-    # /proc/self/cmdline (same mechanism as Docker CMD).
-    # --capability=all: Android init needs full caps (equivalent to --privileged).
-    # --keep-unit: run in service's own cgroup (no transient scope).
-    # --register=no + --link-journal=no: skip machined/journal integration.
-    printf '[Unit]\nDescription=Redroid Android Container (nspawn)\nAfter=systemd-modules-load.service network.target\nRequires=systemd-modules-load.service\n\n[Service]\nType=simple\nExecStartPre=-/bin/mkdir -p /dev/binderfs\nExecStartPre=-/bin/mount -t binder binder /dev/binderfs\nExecStart=/usr/bin/systemd-nspawn --machine=android --directory=/var/lib/machines/android_os --capability=all --keep-unit --bind=/dev/binderfs --bind=/dev/fuse --register=no --link-journal=no /init androidboot.redroid_gpu_mode=guest androidboot.use_memfd=1 androidboot.redroid_width=1080 androidboot.redroid_height=1920 androidboot.redroid_dpi=320\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/redroid-nspawn.service && \
-    systemctl enable redroid-nspawn && \
+    # --- redroid launch script ---
+    printf '#!/bin/sh\nset -e\nROOTFS=/var/lib/machines/android_os\nmount --make-rprivate /\nmount --bind /dev "$ROOTFS/dev"\nmount -t proc proc "$ROOTFS/proc"\nmount -t sysfs sysfs "$ROOTFS/sys"\nmkdir -p "$ROOTFS/dev/binderfs"\nmount -t binder binder "$ROOTFS/dev/binderfs" 2>/dev/null || true\nexec chroot "$ROOTFS" /init \\\n  androidboot.redroid_gpu_mode=guest \\\n  androidboot.use_memfd=1 \\\n  androidboot.redroid_width=1080 \\\n  androidboot.redroid_height=1920 \\\n  androidboot.redroid_dpi=320\n' > /usr/local/bin/redroid-start.sh && \
+    chmod 0755 /usr/local/bin/redroid-start.sh && \
+    # --- redroid systemd service ---
+    printf '[Unit]\nDescription=Redroid Android Container\nAfter=systemd-modules-load.service network.target\nRequires=systemd-modules-load.service\n\n[Service]\nType=simple\nExecStart=/usr/bin/unshare --pid --mount --fork -- /usr/local/bin/redroid-start.sh\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/redroid.service && \
+    systemctl enable redroid && \
     # --- access ---
     echo 'root:cocoon' | chpasswd && \
     rm -rf /var/lib/apt/lists/*
