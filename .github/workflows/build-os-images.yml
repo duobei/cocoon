@@ -148,8 +148,10 @@ jobs:
         id: secrets
         run: |
           base="os-image/${{ matrix.name }}"
+          tag="${{ matrix.tag }}"
           {
             echo "files<<EOF"
+            # Shared secrets (base dir)
             for f in "$base"/*.sh "$base"/*.rc; do
               [ -f "$f" ] || continue
               name="$(basename "$f")"
@@ -159,6 +161,14 @@ jobs:
                 *.rc)        id="cocoon_$(echo "${name%.rc}" | tr '-' '_')_rc" ;;
                 *.sh)        id="cocoon_$(echo "${name%.sh}" | tr '-' '_')" ;;
               esac
+              echo "${id}=${f}"
+            done
+            # Tag-specific secrets (tag subdir, skip Dockerfile)
+            for f in "$base/$tag"/*; do
+              [ -f "$f" ] || continue
+              name="$(basename "$f")"
+              [ "$name" = "Dockerfile" ] && continue
+              id="$(echo "$name" | tr '.-' '__')"
               echo "${id}=${f}"
             done
             echo "EOF"

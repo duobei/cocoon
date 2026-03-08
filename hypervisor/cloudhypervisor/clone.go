@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,7 +138,7 @@ func (ch *CloudHypervisor) cloneAfterExtract(ctx context.Context, vmID string, v
 		return nil, fmt.Errorf("launch CH: %w", err)
 	}
 
-	if err := ch.restoreAndResumeClone(ctx, pid, sockPath, runDir, directBoot, hadCidataInSnapshot, storageConfigs, vmCfg.CPU); err != nil {
+	if err := ch.restoreAndResumeClone(ctx, pid, sockPath, runDir, directBoot, hadCidataInSnapshot, storageConfigs, networkConfigs, chCfg, vmCfg.CPU); err != nil {
 		return nil, err
 	}
 
@@ -178,6 +179,8 @@ func (ch *CloudHypervisor) restoreAndResumeClone(
 	sockPath, runDir string,
 	directBoot, hadCidataInSnapshot bool,
 	storageConfigs []*types.StorageConfig,
+	networkConfigs []*types.NetworkConfig,
+	snapshotCfg *chVMConfig,
 	cpu int,
 ) error {
 	hc := utils.NewSocketHTTPClient(sockPath)
@@ -185,6 +188,15 @@ func (ch *CloudHypervisor) restoreAndResumeClone(
 		ch.abortLaunch(ctx, pid, sockPath, runDir)
 		return fmt.Errorf("vm.restore: %w", err)
 	}
+
+	// Hot-swap NICs while paused: remove snapshot's virtio-net devices (which carry
+	// the old MAC baked in binary device state), then add fresh ones with correct MAC.
+	// The guest will discover the new devices via ACPI GED notification on resume.
+	if err := hotSwapNets(ctx, hc, snapshotCfg.Nets, networkConfigs); err != nil {
+		ch.abortLaunch(ctx, pid, sockPath, runDir)
+		return fmt.Errorf("hot-swap NICs: %w", err)
+	}
+
 	if !directBoot && !hadCidataInSnapshot {
 		if len(storageConfigs) == 0 {
 			ch.abortLaunch(ctx, pid, sockPath, runDir)
@@ -199,6 +211,33 @@ func (ch *CloudHypervisor) restoreAndResumeClone(
 	if err := resumeVM(ctx, hc); err != nil {
 		ch.abortLaunch(ctx, pid, sockPath, runDir)
 		return fmt.Errorf("vm.resume: %w", err)
+	}
+	return nil
+}
+
+// hotSwapNets removes old NICs (carrying stale MAC from snapshot binary state)
+// and adds new ones with the correct MAC/TAP configuration.
+// Must be called while VM is paused (between vm.restore and vm.resume).
+func hotSwapNets(ctx context.Context, hc *http.Client, oldNets []chNet, networkConfigs []*types.NetworkConfig) error {
+	logger := log.WithFunc("cloudhypervisor.hotSwapNets")
+	for _, oldNet := range oldNets {
+		if oldNet.ID == "" {
+			continue
+		}
+		if err := removeDeviceVM(ctx, hc, oldNet.ID); err != nil {
+			return fmt.Errorf("remove net device %s: %w", oldNet.ID, err)
+		}
+		logger.Infof(ctx, "removed snapshot NIC %s (old MAC %s)", oldNet.ID, oldNet.Mac)
+	}
+	for i, nc := range networkConfigs {
+		if i >= len(oldNets) {
+			break
+		}
+		newNet := networkConfigToNet(nc)
+		if err := addNetVM(ctx, hc, newNet); err != nil {
+			return fmt.Errorf("add net device for %s: %w", nc.Mac, err)
+		}
+		logger.Infof(ctx, "added NIC with MAC %s on TAP %s", nc.Mac, nc.Tap)
 	}
 	return nil
 }

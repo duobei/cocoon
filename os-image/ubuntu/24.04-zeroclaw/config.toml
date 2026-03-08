@@ -1,0 +1,30 @@
+# ZeroClaw configuration
+# Override api_key and default_model before use.
+
+api_key = ""
+default_provider = "openrouter"
+default_model = "anthropic/claude-sonnet-4-6"
+default_temperature = 0.7
+
+[gateway]
+port = 42617
+host = "0.0.0.0"
+require_pairing = false
+allow_public_bind = true
+
+[memory]
+backend = "sqlite"
+auto_save = true
+embedding_provider = "none"
+
+[autonomy]
+level = "supervised"
+workspace_only = false
+
+[browser]
+enabled = true
+cdp_url = "http://127.0.0.1:9222"
+attach_only = true
+
+[runtime]
+kind = "native"
