@@ -158,8 +158,10 @@ func (ch *CloudHypervisor) cloneAfterExtract(ctx context.Context, vmID string, v
 		r.VM = info
 		r.BootConfig = bootCfg
 		r.ImageBlobIDs = blobIDs
-		// Cloudimg: FirstBooted=false → first restart attaches cidata → cloud-init re-runs.
-		r.FirstBooted = directBoot
+		// Clone VM is already running with cidata attached; cloud-init reinit
+		// is done via post-clone hints. Mark as first-booted so the next
+		// cold boot (stop+start) skips cidata — no need for a second cloud-init run.
+		r.FirstBooted = true
 		return nil
 	}); err != nil {
 		ch.abortLaunch(ctx, pid, sockPath, runDir)
