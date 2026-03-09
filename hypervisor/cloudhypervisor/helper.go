@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -199,6 +200,42 @@ func cleanupRuntimeFiles(ctx context.Context, runDir string) {
 			log.WithFunc("cloudhypervisor.cleanupRuntimeFiles").Warnf(ctx, "cleanup %s: %v", p, err)
 		}
 	}
+}
+
+// qemuExpandImage expands a disk image to targetSize if its current virtual
+// size is smaller. For raw/sparse files (directBoot), os.Truncate is used;
+// for qcow2 images, qemu-img resize is used. No-op if already large enough.
+func qemuExpandImage(ctx context.Context, path string, targetSize int64, directBoot bool) error {
+	if directBoot {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		if targetSize <= fi.Size() {
+			return nil
+		}
+		return os.Truncate(path, targetSize)
+	}
+
+	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", path).Output() //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("qemu-img info %s: %w", path, err)
+	}
+	var info struct {
+		VirtualSize int64 `json:"virtual-size"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return fmt.Errorf("parse qemu-img info %s: %w", path, err)
+	}
+	if targetSize <= info.VirtualSize {
+		return nil
+	}
+	if out, err := exec.CommandContext(ctx, //nolint:gosec
+		"qemu-img", "resize", path, fmt.Sprintf("%d", targetSize),
+	).CombinedOutput(); err != nil {
+		return fmt.Errorf("qemu-img resize %s: %s: %w", path, strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 func removeVMDirs(runDir, logDir string) error {

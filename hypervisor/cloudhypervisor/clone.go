@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -80,7 +79,7 @@ func (ch *CloudHypervisor) cloneAfterExtract(ctx context.Context, vmID string, v
 		return nil, fmt.Errorf("verify base files: %w", err)
 	}
 	if vmCfg.Storage > 0 {
-		if err = resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
+		if err = qemuExpandImage(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
 			return nil, fmt.Errorf("resize COW: %w", err)
 		}
 	}
@@ -341,30 +340,6 @@ func updateCOWPath(configs []*types.StorageConfig, newCOWPath string, directBoot
 	for _, sc := range configs {
 		if !sc.RO {
 			sc.Path = newCOWPath
-		}
-	}
-	return nil
-}
-
-func resizeCOW(ctx context.Context, cowPath string, targetSize int64, directBoot bool) error {
-	fi, err := os.Stat(cowPath)
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", cowPath, err)
-	}
-	if targetSize <= fi.Size() {
-		return nil // already large enough
-	}
-
-	if directBoot {
-		if err := os.Truncate(cowPath, targetSize); err != nil {
-			return fmt.Errorf("truncate %s to %d: %w", cowPath, targetSize, err)
-		}
-	} else {
-		sizeStr := fmt.Sprintf("%d", targetSize)
-		if out, err := exec.CommandContext(ctx, //nolint:gosec
-			"qemu-img", "resize", cowPath, sizeStr,
-		).CombinedOutput(); err != nil {
-			return fmt.Errorf("qemu-img resize %s: %s: %w", cowPath, strings.TrimSpace(string(out)), err)
 		}
 	}
 	return nil

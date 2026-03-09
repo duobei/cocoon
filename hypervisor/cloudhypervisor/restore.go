@@ -91,7 +91,7 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 	}
 
 	if vmCfg.Storage > 0 {
-		if err = resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
+		if err = qemuExpandImage(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
 			return nil, fmt.Errorf("resize COW: %w", err)
 		}
 	}

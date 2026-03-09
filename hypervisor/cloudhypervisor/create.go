@@ -147,13 +147,10 @@ func (ch *CloudHypervisor) prepareCloudimg(ctx context.Context, vmID string, vmC
 		return nil, fmt.Errorf("qemu-img create overlay: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	// qemu-img resize <overlay> <size>
+	// Expand overlay if requested size exceeds the base image's virtual size.
 	if vmCfg.Storage > 0 {
-		sizeBytes := fmt.Sprintf("%d", vmCfg.Storage)
-		if out, err := exec.CommandContext(ctx, //nolint:gosec
-			"qemu-img", "resize", overlayPath, sizeBytes,
-		).CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("qemu-img resize overlay: %s: %w", strings.TrimSpace(string(out)), err)
+		if err := qemuExpandImage(ctx, overlayPath, vmCfg.Storage, false); err != nil {
+			return nil, err
 		}
 	}
 
