@@ -65,6 +65,13 @@ func (c *CloudImg) Pull(ctx context.Context, url string, tracker progress.Tracke
 	return err
 }
 
+// Import imports local qcow2 file(s) as a cloud image.
+// Multiple files are concatenated in order (split file reassembly),
+// then converted to qcow2 v3 for consistency.
+func (c *CloudImg) Import(ctx context.Context, name string, tracker progress.Tracker, file ...string) error {
+	return importQcow2(ctx, c.conf, c.store, name, tracker, file...)
+}
+
 // Inspect returns the record for a single image. Returns (nil, nil) if not found.
 func (c *CloudImg) Inspect(ctx context.Context, id string) (*types.Image, error) {
 	return c.ops.Inspect(ctx, id)

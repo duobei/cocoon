@@ -72,6 +72,12 @@ func (o *OCI) Pull(ctx context.Context, image string, tracker progress.Tracker) 
 	return err
 }
 
+// Import imports local tar files as an OCI image.
+// Each tar file becomes one EROFS layer (ordered by the files slice).
+func (o *OCI) Import(ctx context.Context, name string, tracker progress.Tracker, file ...string) error {
+	return importTarLayers(ctx, o.conf, o.store, name, tracker, file...)
+}
+
 // Inspect returns the record for a single image. Returns (nil, nil) if not found.
 func (o *OCI) Inspect(ctx context.Context, id string) (*types.Image, error) {
 	return o.ops.Inspect(ctx, id)

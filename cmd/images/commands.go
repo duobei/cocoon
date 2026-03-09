@@ -5,6 +5,7 @@ import "github.com/spf13/cobra"
 // Actions defines image management operations.
 type Actions interface {
 	Pull(cmd *cobra.Command, args []string) error
+	Import(cmd *cobra.Command, args []string) error
 	List(cmd *cobra.Command, args []string) error
 	RM(cmd *cobra.Command, args []string) error
 	Inspect(cmd *cobra.Command, args []string) error
@@ -24,6 +25,21 @@ func Command(h Actions) *cobra.Command {
 	}
 	listCmd.Flags().StringP("format", "o", "table", `output format: "table" or "json"`)
 
+	importCmd := &cobra.Command{
+		Use:   "import FILE [FILE...]",
+		Short: "Import local tar(s) as OCI image or qcow2(s) as cloud image",
+		Long: `Import local files as a cocoon image.
+
+File type is auto-detected from the first file:
+  - qcow2 (QFI magic): files are concatenated (split reassembly) and stored as a cloud image
+  - tar: each file becomes an EROFS layer in an OCI image
+
+Mixing tar and qcow2 files is not allowed.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: h.Import,
+	}
+	importCmd.Flags().String("name", "", "image name (required for tar; defaults to filename for single qcow2)")
+
 	imageCmd.AddCommand(
 		&cobra.Command{
 			Use:   "pull IMAGE [IMAGE...]",
@@ -31,6 +47,7 @@ func Command(h Actions) *cobra.Command {
 			Args:  cobra.MinimumNArgs(1),
 			RunE:  h.Pull,
 		},
+		importCmd,
 		listCmd,
 		&cobra.Command{
 			Use:   "rm ID [ID...]",

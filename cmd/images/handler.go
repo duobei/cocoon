@@ -3,6 +3,8 @@ package images
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cmdcore "github.com/projecteru2/cocoon/cmd/core"
+	"github.com/projecteru2/cocoon/config"
 	"github.com/projecteru2/cocoon/images/cloudimg"
 	"github.com/projecteru2/cocoon/images/oci"
 	"github.com/projecteru2/cocoon/progress"
@@ -45,6 +48,88 @@ func (h Handler) Pull(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (h Handler) Import(cmd *cobra.Command, args []string) error {
+	ctx, conf, err := h.Init(cmd)
+	if err != nil {
+		return err
+	}
+
+	name, _ := cmd.Flags().GetString("name")
+
+	// Detect file type from the first file's magic bytes.
+	isQcow2 := cloudimg.IsQcow2File(args[0])
+
+	if !isQcow2 && !oci.IsTarFile(args[0]) {
+		return fmt.Errorf("cannot detect file type for %s (expected qcow2 or tar)", args[0])
+	}
+
+	// Derive name if not provided.
+	if name == "" {
+		if isQcow2 {
+			// For qcow2: strip extensions like .qcow2, .part1, etc.
+			base := filepath.Base(args[0])
+			name = strings.TrimSuffix(base, filepath.Ext(base))
+			// Strip .qcow2 from names like "windows-base.qcow2.part1"
+			name = strings.TrimSuffix(name, ".qcow2")
+		} else {
+			return fmt.Errorf("--name is required for tar import")
+		}
+	}
+
+	if isQcow2 {
+		return h.importCloudimg(ctx, conf, name, args)
+	}
+	return h.importOCI(ctx, conf, name, args)
+}
+
+func (h Handler) importOCI(ctx context.Context, conf *config.Config, name string, files []string) error {
+	logger := log.WithFunc("cmd.importOCI")
+	ociStore, err := oci.New(ctx, conf)
+	if err != nil {
+		return fmt.Errorf("init oci backend: %w", err)
+	}
+	tracker := progress.NewTracker(func(e ociProgress.Event) {
+		switch e.Phase {
+		case ociProgress.PhasePull:
+			logger.Infof(ctx, "importing %s (%d layers)", name, e.Total)
+		case ociProgress.PhaseLayer:
+			logger.Infof(ctx, "[%d/%d] %s done", e.Index+1, e.Total, e.Digest)
+		case ociProgress.PhaseCommit:
+			logger.Info(ctx, "committing...")
+		case ociProgress.PhaseDone:
+			logger.Infof(ctx, "done: %s", name)
+		}
+	})
+	if err := ociStore.Import(ctx, name, tracker, files...); err != nil {
+		return fmt.Errorf("import %s: %w", name, err)
+	}
+	return nil
+}
+
+func (h Handler) importCloudimg(ctx context.Context, conf *config.Config, name string, files []string) error {
+	logger := log.WithFunc("cmd.importCloudimg")
+	cloudimgStore, err := cloudimg.New(ctx, conf)
+	if err != nil {
+		return fmt.Errorf("init cloudimg backend: %w", err)
+	}
+	tracker := progress.NewTracker(func(e cloudimgProgress.Event) {
+		switch e.Phase {
+		case cloudimgProgress.PhaseDownload:
+			logger.Infof(ctx, "reading %d file(s) for %s", len(files), name)
+		case cloudimgProgress.PhaseConvert:
+			logger.Info(ctx, "converting to qcow2...")
+		case cloudimgProgress.PhaseCommit:
+			logger.Info(ctx, "committing...")
+		case cloudimgProgress.PhaseDone:
+			logger.Infof(ctx, "done: %s", name)
+		}
+	})
+	if err := cloudimgStore.Import(ctx, name, tracker, files...); err != nil {
+		return fmt.Errorf("import %s: %w", name, err)
 	}
 	return nil
 }
