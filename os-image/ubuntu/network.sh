@@ -18,6 +18,7 @@ case "$1" in prereqs) prereqs; exit 0 ;; esac
 [ -z "$rootmnt" ] && exit 0
 
 _dns_servers=""
+_has_static=false
 
 for conf_file in /run/net-*.conf; do
     [ -f "$conf_file" ] || continue
@@ -29,6 +30,8 @@ for conf_file in /run/net-*.conf; do
     # Read MAC from sysfs if HWADDR not in conf (older klibc).
     [ -z "$HWADDR" ] && [ -e "/sys/class/net/${DEVICE}/address" ] && HWADDR=$(cat "/sys/class/net/${DEVICE}/address")
     [ -z "$HWADDR" ] && continue
+
+    _has_static=true
 
     # Convert dotted netmask to prefix length.
     prefix=0
@@ -74,6 +77,26 @@ EOF
         : > "${rootmnt}/etc/cocoon-hostname-set"
     fi
 done
+
+# Fallback: no kernel ip= configured — write DHCP config per NIC matched by MAC.
+# This covers macvlan / external DHCP scenarios where CNI does not assign IPs.
+if [ "$_has_static" = false ]; then
+    mkdir -p "${rootmnt}/etc/systemd/network"
+    for sysdev in /sys/class/net/*; do
+        [ -e "$sysdev" ] || continue
+        dev=$(basename "$sysdev")
+        # Skip loopback and virtual devices.
+        case "$dev" in lo|bonding_masters) continue ;; esac
+        [ -e "${sysdev}/address" ] || continue
+        mac=$(cat "${sysdev}/address")
+        # Skip zero/empty MACs.
+        case "$mac" in ""|00:00:00:00:00:00) continue ;; esac
+        mac_sanitized=$(echo "$mac" | tr -d ':')
+        {
+            printf "[Match]\nMACAddress=%s\n\n[Network]\nDHCP=ipv4\n" "$mac"
+        } > "${rootmnt}/etc/systemd/network/10-${mac_sanitized}.network"
+    done
+fi
 
 # Write /etc/resolv.conf from DNS servers collected above.
 [ -z "$_dns_servers" ] && _dns_servers="8.8.8.8 8.8.4.4"
