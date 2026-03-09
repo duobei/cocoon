@@ -229,4 +229,3 @@ func (ch *CloudHypervisor) generateCidata(vmID string, vmCfg *types.VMConfig, ne
 	}
 	return f.Close()
 }
-

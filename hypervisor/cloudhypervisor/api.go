@@ -21,11 +21,11 @@ type chVMConfig struct {
 }
 
 type chNet struct {
-	ID        string  `json:"id,omitempty"`
-	Tap       string  `json:"tap"`
-	Mac       string  `json:"mac,omitempty"`
-	NumQueues int `json:"num_queues,omitempty"`
-	QueueSize int `json:"queue_size,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Tap       string `json:"tap"`
+	Mac       string `json:"mac,omitempty"`
+	NumQueues int    `json:"num_queues,omitempty"`
+	QueueSize int    `json:"queue_size,omitempty"`
 
 	OffloadTSO  bool `json:"offload_tso,omitempty"`
 	OffloadUFO  bool `json:"offload_ufo,omitempty"`

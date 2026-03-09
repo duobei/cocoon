@@ -178,11 +178,11 @@ func VMConfigFromFlags(cmd *cobra.Command, image string) (*types.VMConfig, error
 	}
 
 	return &types.VMConfig{
-		Name:        vmName,
-		CPU:         cpu,
-		Memory:      memBytes,
-		Storage:     storBytes,
-		Image:       image,
+		Name:    vmName,
+		CPU:     cpu,
+		Memory:  memBytes,
+		Storage: storBytes,
+		Image:   image,
 		Network: network,
 	}, nil
 }
@@ -234,11 +234,11 @@ func CloneVMConfigFromFlags(cmd *cobra.Command, snapCfg *types.SnapshotConfig) (
 	}
 
 	return &types.VMConfig{
-		Name:        vmName,
-		CPU:         cpu,
-		Memory:      memBytes,
-		Storage:     storBytes,
-		Image:       snapCfg.Image,
+		Name:    vmName,
+		CPU:     cpu,
+		Memory:  memBytes,
+		Storage: storBytes,
+		Image:   snapCfg.Image,
 		Network: network,
 	}, nil
 }
