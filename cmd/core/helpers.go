@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	units "github.com/docker/go-units"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/spf13/cobra"
 
 	"github.com/projecteru2/cocoon/config"
@@ -329,21 +330,40 @@ func IsURL(ref string) bool {
 	return strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://")
 }
 
-// sanitizeVMName derives a safe VM name from an image reference.
-// Strips registry hostname (first path component if it looks like a hostname),
-// keeps remaining path components joined by '-', replaces ':' with '-',
-// and prepends "cocoon-".
-// e.g. "ghcr.io/foo/ubuntu:24.04" → "cocoon-foo-ubuntu-24.04"
+// sanitizeVMName derives a safe VM name from an image reference using
+// go-containerregistry/pkg/name to properly parse registry, repository, tag,
+// and digest components.
 //
-//	"ubuntu:24.04"              → "cocoon-ubuntu-24.04"
+//	"ghcr.io/foo/ubuntu:24.04"        → "cocoon-foo-ubuntu-24.04"
+//	"ubuntu:24.04"                    → "cocoon-ubuntu-24.04"
+//	"ghcr.io/ns/img@sha256:abc..."    → "cocoon-ns-img"
 func sanitizeVMName(image string) string {
-	parts := strings.Split(image, "/")
-	// Strip registry hostname: if first component contains a dot or colon
-	// (e.g., "ghcr.io", "localhost:5000"), it's a registry — drop it.
-	if len(parts) > 1 && (strings.ContainsAny(parts[0], ".:")) {
-		parts = parts[1:]
+	ref, err := name.ParseReference(image)
+	if err != nil {
+		// Unparseable — fall back to simple replace.
+		n := strings.ReplaceAll(image, "/", "-")
+		n = strings.ReplaceAll(n, ":", "-")
+		n = "cocoon-" + n
+		if len(n) > 63 {
+			n = n[:63]
+		}
+		return n
 	}
-	name := strings.Join(parts, "-")
-	name = strings.ReplaceAll(name, ":", "-")
-	return "cocoon-" + name
+
+	// RepositoryStr() strips the registry hostname.
+	// Docker Hub official images get "library/" prepended — strip it.
+	repo := ref.Context().RepositoryStr()
+	repo = strings.TrimPrefix(repo, "library/")
+
+	n := "cocoon-" + strings.ReplaceAll(repo, "/", "-")
+
+	// Append tag (but not digest — it's too long and not human-readable).
+	if tag, ok := ref.(name.Tag); ok && tag.TagStr() != "latest" {
+		n += "-" + tag.TagStr()
+	}
+
+	if len(n) > 63 {
+		n = n[:63]
+	}
+	return n
 }

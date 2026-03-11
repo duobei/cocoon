@@ -472,6 +472,93 @@ func TestDelete_RecreateName(t *testing.T) {
 	}
 }
 
+// DataDir
+
+func TestDataDir(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	stream := makeTarGz(t, map[string][]byte{"cow.raw": []byte("disk")})
+	cfg := &types.SnapshotConfig{
+		ID:           testID(t),
+		Name:         "datadir",
+		Image:        "ubuntu:24.04",
+		ImageBlobIDs: map[string]struct{}{"blob1": {}},
+		CPU:          2,
+		Memory:       1 << 30,
+	}
+
+	id, err := lf.Create(ctx, cfg, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir, got, err := lf.DataDir(ctx, "datadir")
+	if err != nil {
+		t.Fatalf("DataDir: %v", err)
+	}
+	if dataDir == "" {
+		t.Error("expected non-empty dataDir")
+	}
+	if got.ID != id {
+		t.Errorf("ID: got %q, want %q", got.ID, id)
+	}
+	if got.Name != "datadir" {
+		t.Errorf("Name: got %q, want %q", got.Name, "datadir")
+	}
+	if _, ok := got.ImageBlobIDs["blob1"]; !ok {
+		t.Errorf("ImageBlobIDs missing 'blob1': %v", got.ImageBlobIDs)
+	}
+}
+
+func TestDataDir_NotFound(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	_, _, err := lf.DataDir(ctx, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, snapshot.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestDataDir_ImageBlobIDsIsolation(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	stream := makeTarGz(t, map[string][]byte{"f.txt": []byte("x")})
+	cfg := &types.SnapshotConfig{
+		ID:           testID(t),
+		Name:         "iso",
+		ImageBlobIDs: map[string]struct{}{"original": {}},
+	}
+	id, err := lf.Create(ctx, cfg, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get config via DataDir, mutate the returned ImageBlobIDs.
+	_, got1, err := lf.DataDir(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got1.ImageBlobIDs["injected"] = struct{}{}
+
+	// Get config again — mutation should NOT be visible.
+	_, got2, err := lf.DataDir(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got2.ImageBlobIDs["injected"]; ok {
+		t.Error("ImageBlobIDs mutation leaked: deep copy is broken")
+	}
+	if _, ok := got2.ImageBlobIDs["original"]; !ok {
+		t.Error("ImageBlobIDs missing 'original' after re-read")
+	}
+}
+
 // Restore
 
 func TestRestore_ConfigRoundtrip(t *testing.T) {
@@ -568,5 +655,87 @@ func TestRestore_DataStream(t *testing.T) {
 	}
 	if !found {
 		t.Error("state.json not found in restore stream")
+	}
+}
+
+func TestRestore_CloseWaitsForGoroutine(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	stream := makeTarGz(t, map[string][]byte{"f.txt": []byte("x")})
+	id, err := lf.Create(ctx, &types.SnapshotConfig{ID: testID(t), Name: "cw"}, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, rc, err := lf.Restore(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close without reading — the background goroutine should still complete
+	// without hanging, and Close should not panic.
+	if err := rc.Close(); err != nil {
+		// A broken pipe or similar error is acceptable here since we didn't
+		// consume the stream — but it must not hang or panic.
+		t.Logf("Close returned (expected) error: %v", err)
+	}
+}
+
+func TestRestore_DoubleCloseNoPanic(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	stream := makeTarGz(t, map[string][]byte{"f.txt": []byte("x")})
+	id, err := lf.Create(ctx, &types.SnapshotConfig{ID: testID(t), Name: "dc"}, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, rc, err := lf.Restore(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First close — should work normally.
+	rc.Close()
+	// Second close — must not deadlock or panic (idempotent via sync.Once).
+	rc.Close()
+}
+
+func TestRestore_ImageBlobIDsIsolation(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	stream := makeTarGz(t, map[string][]byte{"f.txt": []byte("x")})
+	cfg := &types.SnapshotConfig{
+		ID:           testID(t),
+		Name:         "riso",
+		ImageBlobIDs: map[string]struct{}{"orig": {}},
+	}
+	id, err := lf.Create(ctx, cfg, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get config via Restore, mutate returned ImageBlobIDs.
+	got1, rc1, err := lf.Restore(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc1.Close()
+	got1.ImageBlobIDs["injected"] = struct{}{}
+
+	// Get config again — mutation should NOT be visible.
+	got2, rc2, err := lf.Restore(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc2.Close()
+	if _, ok := got2.ImageBlobIDs["injected"]; ok {
+		t.Error("ImageBlobIDs mutation leaked through Restore: deep copy is broken")
+	}
+	if _, ok := got2.ImageBlobIDs["orig"]; !ok {
+		t.Error("ImageBlobIDs missing 'orig' after re-read")
 	}
 }

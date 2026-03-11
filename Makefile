@@ -114,8 +114,8 @@ clean: ## Remove build artifacts, coverage files, and test cache
 	rm -f coverage.out coverage.html coverage.txt
 	go clean -testcache
 
-cloc: ## Count lines of code (requires cloc)
-	cloc --exclude-dir=vendor,dist --exclude-ext=json .
+cloc: ## Count lines of code excluding tests (requires cloc)
+	cloc --exclude-dir=vendor,dist --exclude-ext=json --not-match-f='_test\.go$$' .
 
 # --- Help ---
 

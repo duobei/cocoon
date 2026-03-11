@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -297,15 +298,20 @@ func (lf *LocalFile) RegisterGC(orch *gc.Orchestrator) {
 
 // tarStreamReader wraps io.PipeReader so that Close waits for the background
 // goroutine to finish streaming, surfacing any error from the tar writer.
+// Close is idempotent: concurrent or repeated calls are safe.
 type tarStreamReader struct {
 	*io.PipeReader
 	done <-chan error
+	once sync.Once
+	err  error
 }
 
 func (r *tarStreamReader) Close() error {
-	err := r.PipeReader.Close()
-	if streamErr := <-r.done; streamErr != nil {
-		err = streamErr
-	}
-	return err
+	r.once.Do(func() {
+		r.err = r.PipeReader.Close()
+		if streamErr := <-r.done; streamErr != nil {
+			r.err = streamErr
+		}
+	})
+	return r.err
 }
