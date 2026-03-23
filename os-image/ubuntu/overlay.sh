@@ -96,8 +96,8 @@ mountroot() {
     mkdir -p "${rootmnt}/dev" "${rootmnt}/proc" "${rootmnt}/sys" "${rootmnt}/run"
 
     # [IO Performance Optimization]
-    # EROFS layers are read-only; "none" removes guest-side scheduling overhead entirely
-    # since ordering is irrelevant for pure reads and direct=on already handles host scheduling.
+    # EROFS layers are read-only and shared; "none" removes guest-side scheduling
+    # overhead on the guest block device for pure-read lower layers.
     # COW disk gets mq-deadline to prevent write starvation under mixed read/write load.
     for dev in $LAYER_DEVS; do
         blk="${dev##*/}"

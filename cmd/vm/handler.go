@@ -709,13 +709,9 @@ func printRunOCI(configs []*types.StorageConfig, boot *types.BootConfig, vmName,
 		cowPath = fmt.Sprintf("cow-%s.raw", vmName)
 	}
 
-	var diskArgs []string
-	for _, d := range configs {
-		diskArgs = append(diskArgs,
-			fmt.Sprintf("path=%s,readonly=on,direct=off,image_type=raw,num_queues=2,queue_size=256,serial=%s", d.Path, d.Serial))
-	}
-	diskArgs = append(diskArgs,
-		fmt.Sprintf("path=%s,readonly=off,direct=off,sparse=on,image_type=raw,num_queues=2,queue_size=256,serial=%s", cowPath, cloudhypervisor.CowSerial))
+	debugConfigs := append(append([]*types.StorageConfig(nil), configs...),
+		&types.StorageConfig{Path: cowPath, RO: false, Serial: cloudhypervisor.CowSerial})
+	diskArgs := cloudhypervisor.DebugDiskCLIArgs(debugConfigs, cpu)
 
 	cocoonLayers := strings.Join(cloudhypervisor.ReverseLayerSerials(configs), ",")
 
@@ -759,7 +755,8 @@ func printRunCloudimg(configs []*types.StorageConfig, boot *types.BootConfig, vm
 	fmt.Printf("%s \\\n", chBin)
 	fmt.Printf("  --firmware %s \\\n", boot.FirmwarePath)
 	fmt.Printf("  --disk \\\n")
-	fmt.Printf("    \"path=%s,readonly=off,direct=off,image_type=qcow2,backing_files=on,num_queues=2,queue_size=256\" \\\n", cowPath)
+	diskArgs := cloudhypervisor.DebugDiskCLIArgs([]*types.StorageConfig{{Path: cowPath, RO: false}}, cpu)
+	fmt.Printf("    \"%s\" \\\n", diskArgs[0])
 	printCommonCHArgs(cpu, maxCPU, memory, balloon)
 }
 

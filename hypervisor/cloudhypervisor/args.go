@@ -141,6 +141,16 @@ func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDis
 	return d
 }
 
+// DebugDiskCLIArgs returns user-facing CH disk CLI args using the same
+// storage-to-disk mapping as the runtime launch path.
+func DebugDiskCLIArgs(storageConfigs []*types.StorageConfig, cpuCount int) []string {
+	args := make([]string, 0, len(storageConfigs))
+	for _, storageConfig := range storageConfigs {
+		args = append(args, diskToCLIArg(storageConfigToDisk(storageConfig, cpuCount)))
+	}
+	return args
+}
+
 // buildCLIArgs converts a chVMConfig into cloud-hypervisor CLI arguments.
 // The resulting args include --api-socket so the socket remains available
 // for later control operations (stop, shutdown, power-button).

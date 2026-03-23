@@ -295,7 +295,7 @@ The cidata disk is **automatically excluded on subsequent boots** — after the 
 ## Performance Tuning
 
 - **Hugepages**: automatically detected from `/proc/sys/vm/nr_hugepages`; when available, VM memory is backed by 2 MiB hugepages for reduced TLB pressure
-- **Disk I/O**: multi-queue virtio-blk with `num_queues` matching boot CPUs and `queue_size=256`; host page cache enabled (`direct=off`) for EROFS layers and COW raw disks
+- **Disk I/O**: multi-queue virtio-blk; readonly base disks keep host page cache (`direct=off`), while writable raw/qcow2 COW disks use O_DIRECT (`direct=on`) to avoid host cache buildup and guest flush storms
 - **Balloon**: 25% of memory auto-returned via virtio-balloon with deflate-on-OOM and free-page reporting (VMs with < 256 MiB memory skip balloon)
 - **Watchdog**: hardware watchdog enabled by default for automatic guest reset on hang
 

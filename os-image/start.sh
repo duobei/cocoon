@@ -94,14 +94,15 @@ DISK_CONFIGS=()
 COCOON_LAYERS=""
 I=0
 for f in $LAYER_FILES; do
-    DISK_CONFIGS+=("path=$f,readonly=on,direct=on,num_queues=2,queue_size=256,serial=cocoon-layer${I}")
+    DISK_CONFIGS+=("path=$f,readonly=on,image_type=raw,num_queues=2,queue_size=256,serial=cocoon-layer${I}")
     # OverlayFS order: Top, ..., Bottom
     if [ -z "$COCOON_LAYERS" ]; then COCOON_LAYERS="cocoon-layer${I}"; else COCOON_LAYERS="cocoon-layer${I},${COCOON_LAYERS}"; fi
     I=$((I+1))
 done
 
 # COW Disk Optimization: 
-# direct=on (Bypass host cache), sparse=on (VMM sparse awareness), 
+# readonly layers keep host page cache; the writable COW disk uses direct=on
+# to bypass host cache. sparse=on keeps the raw file hole-aware.
 # num_queues=2 (Match boot CPUs), queue_size=256 (Deep queue for better throughput)
 DISK_CONFIGS+=("path=cow.raw,readonly=off,direct=on,sparse=on,image_type=raw,num_queues=2,queue_size=256,serial=cocoon-cow")
 
